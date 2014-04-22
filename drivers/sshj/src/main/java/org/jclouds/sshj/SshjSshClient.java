@@ -34,6 +34,8 @@ import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.ConnectException;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.net.SocketTimeoutException;
 import java.util.concurrent.TimeUnit;
 
@@ -44,10 +46,14 @@ import javax.inject.Named;
 import net.schmizz.sshj.SSHClient;
 import net.schmizz.sshj.common.IOUtils;
 import net.schmizz.sshj.connection.ConnectionException;
+import net.schmizz.sshj.connection.channel.direct.LocalPortForwarder;
 import net.schmizz.sshj.connection.channel.direct.PTYMode;
 import net.schmizz.sshj.connection.channel.direct.Session;
 import net.schmizz.sshj.connection.channel.direct.Session.Command;
 import net.schmizz.sshj.connection.channel.direct.SessionChannel;
+import net.schmizz.sshj.connection.channel.forwarded.RemotePortForwarder;
+import net.schmizz.sshj.connection.channel.forwarded.RemotePortForwarder.Forward;
+import net.schmizz.sshj.connection.channel.forwarded.SocketForwardingConnectListener;
 import net.schmizz.sshj.sftp.SFTPClient;
 import net.schmizz.sshj.sftp.SFTPException;
 import net.schmizz.sshj.transport.TransportException;
@@ -543,6 +549,68 @@ public class SshjSshClient implements SshClient {
       }
    }
 
+   class PortForwardConnection implements Connection<Closeable>, Closeable {
+      private SSHClient session;
+      private final String boundHost;
+      private final int sourcePort;
+      private final String destinationHost;
+      private final int destinationPort;
+      private final boolean local;
+      private Thread listenThread;
+
+      public PortForwardConnection(String boundHost, int sourcePort, String destinationHost, int destinationPort, boolean local) {
+         this.boundHost = boundHost;
+         this.sourcePort = sourcePort;
+         this.destinationHost = destinationHost;
+         this.destinationPort = destinationPort;
+         this.local = local;
+      }
+
+      @Override
+      public void clear() {
+      }
+
+      @Override
+      public Closeable create() throws Exception {
+         session = acquire(sshClientConnection);
+         if (local) {
+            final LocalPortForwarder.Parameters params
+                = new LocalPortForwarder.Parameters(boundHost, sourcePort, destinationHost, destinationPort);
+            final ServerSocket ss = new ServerSocket();
+            ss.setReuseAddress(true);
+            ss.bind(new InetSocketAddress(params.getLocalHost(), params.getLocalPort()));
+            listenThread = new Thread(new Runnable() {
+               @Override
+               public void run() {
+                  try {
+                     session.newLocalPortForwarder(params, ss).listen();
+                  } catch (IOException e) {
+                     throw new RuntimeException(e);
+                  }
+               }
+           });
+           listenThread.start();
+         } else {
+             session.getRemotePortForwarder().bind(
+                     new Forward(boundHost, sourcePort),
+                     new SocketForwardingConnectListener(new InetSocketAddress(destinationHost, destinationPort)));
+             session.getTransport().setHeartbeatInterval(30);
+             session.getTransport().join();
+	     }
+         return this;
+      }
+
+      @Override
+      public void close() throws IOException {
+         if (listenThread != null) {
+            listenThread.interrupt();
+         }
+         if (session != null) {
+            session.close();
+         }
+      }
+   }
+
    @Override
    public ExecChannel execChannel(String command) {
       return acquire(new ExecChannelConnection(command));
@@ -556,6 +624,15 @@ public class SshjSshClient implements SshClient {
    @Override
    public String getUsername() {
       return this.user;
+   }
+   @Override
+   public Closeable forwardLocalPort(String bindHost, int bindPort, String remoteHost, int remotePort) {
+      return acquire(new PortForwardConnection(bindHost, bindPort, remoteHost, remotePort, true));
+   }
+
+   @Override
+   public Closeable forwardRemotePort(String remoteBindHost, int remoteBindPort, String localHost, int localPort) {
+      return acquire(new PortForwardConnection(remoteBindHost, remoteBindPort, localHost, localPort, false));
    }
 
 }

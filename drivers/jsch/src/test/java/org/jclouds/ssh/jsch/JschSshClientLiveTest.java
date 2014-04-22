@@ -140,6 +140,15 @@ public class JschSshClientLiveTest {
                throw new RuntimeException("command " + command + " not stubbed");
             }
 
+            @Override
+            public Closeable forwardLocalPort(String bindHost, int bindPort, String remoteHost, int remotePort) {
+               return null;
+            }
+
+            @Override
+            public Closeable forwardRemotePort(String remoteBindHost, int remoteBindPort, String localHost, int localPort) {
+               return null;
+            }
          };
       } else {
          Injector i = Guice.createInjector(new JschSshClientModule(), new SLF4JLoggingModule());

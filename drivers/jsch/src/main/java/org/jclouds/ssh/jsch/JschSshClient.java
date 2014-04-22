@@ -507,9 +507,57 @@ public class JschSshClient implements SshClient {
       }
    };
 
+   class PortForwardConnection implements Connection<Closeable>, Closeable {
+      private Session session;
+      private final String boundHost;
+      private final int sourcePort;
+      private final String destinationHost;
+      private final int destinationPort;
+      private final boolean local;
+
+      public PortForwardConnection(String boundHost, int sourcePort, String destinationHost, int destinationPort, boolean local) {
+         this.boundHost = boundHost;
+         this.sourcePort = sourcePort;
+         this.destinationHost = destinationHost;
+         this.destinationPort = destinationPort;
+         this.local = local;
+      }
+
+      @Override
+      public void clear() {
+      }
+
+      @Override
+      public Closeable create() throws Exception {
+         session = acquire(sessionConnection);
+         if (local) {
+            session.setPortForwardingL(boundHost, sourcePort, destinationHost, destinationPort);
+         } else {
+            session.setPortForwardingR(boundHost, sourcePort, destinationHost, destinationPort);
+         }
+         return this;
+      }
+
+      @Override
+      public void close() throws IOException {
+         if (session != null) {
+            session.disconnect();
+         }
+      }
+   }
    @Override
    public ExecChannel execChannel(String command) {
       return acquire(new ExecChannelConnection(command));
+   }
+
+   @Override
+   public Closeable forwardLocalPort(String bindHost, int bindPort, String remoteHost, int remotePort) {
+      return acquire(new PortForwardConnection(bindHost, bindPort, remoteHost, remotePort, true));
+   }
+
+   @Override
+   public Closeable forwardRemotePort(String remoteBindHost, int remoteBindPort, String localHost, int localPort) {
+      return acquire(new PortForwardConnection(remoteBindHost, remoteBindPort, localHost, localPort, false));
    }
 
 }

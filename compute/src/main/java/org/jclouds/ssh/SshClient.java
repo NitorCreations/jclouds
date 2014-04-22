@@ -16,6 +16,8 @@
  */
 package org.jclouds.ssh;
 
+import java.io.Closeable;
+
 import org.jclouds.compute.domain.ExecChannel;
 import org.jclouds.compute.domain.ExecResponse;
 import org.jclouds.domain.LoginCredentials;
@@ -38,6 +40,10 @@ public interface SshClient {
    String getHostAddress();
 
    void put(String path, Payload contents);
+
+   Closeable forwardLocalPort(String bindHost, int bindPort, String remoteHost, int remotePort);
+
+   Closeable forwardRemotePort(String remoteBindHost, int remoteBindPort, String localHost, int localPort);
 
    Payload get(String path);
 
